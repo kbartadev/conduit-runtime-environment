@@ -189,6 +189,12 @@ class alignas(64) networked_conduit {
     void mark_dead() noexcept {
         bool expected = false;
         if (is_dead_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+            // PHYSICAL CLEANUP: Reset all partial-transfer state.
+            // This prevents "Zombie Frame" corruption if the Orchestrator
+            // later binds a new OS socket to this conduit.
+            rx_bytes_read_ = 0;
+            tx_inflight_offset_ = 0;
+
             // 6. DEAD Transition surfacing
             // TODO(Architecture): Emit an AXIOM system event (e.g., conduit_dead_event)
             // into the local runtime topology to trigger failover/orchestration routines.
