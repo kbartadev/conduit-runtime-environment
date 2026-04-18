@@ -37,6 +37,8 @@ namespace axiom {
 
         static void* operator new(std::size_t) = delete;
         static void* operator new(std::size_t, void* ptr) noexcept { return ptr; }
+
+        static void operator delete(void*, void*) noexcept {}
         static void operator delete(void*) = delete;
     };
 
@@ -64,11 +66,6 @@ namespace axiom {
 #else
     constexpr std::size_t CACHE_LINE_SIZE = 64;
 #endif
-    /* TODO
-    template<typename Event>
-    struct cell {
-        alignas(Event) unsigned char payload[sizeof(Event)];
-    };*/
     template <typename Event>
     struct cell {
         union {
@@ -88,11 +85,8 @@ namespace axiom {
         explicit pool(uint32_t capacity = 1024) : capacity_(capacity) {
             memory_ = std::make_unique<cell<Event>[]>(capacity);
             for (uint32_t i = 0; i < capacity - 1; ++i) {
-                /*reinterpret_cast<uint32_t*>(memory_[i].payload) = i + 1; TODO
-                */
                 memory_[i].next_index = i + 1;
             }
-            // *reinterpret_cast<uint32_t*>(memory_[capacity - 1].payload) = END_OF_LIST; TODO
             memory_[capacity - 1].next_index = END_OF_LIST;
             free_head_.store(0, std::memory_order_relaxed);
         }
@@ -104,7 +98,6 @@ namespace axiom {
                 index = static_cast<uint32_t>(head & 0xFFFFFFFFu);
                 tag = static_cast<uint32_t>(head >> 32);
                 if (index == END_OF_LIST) std::terminate();
-                //uint32_t next = *reinterpret_cast<uint32_t*>(memory_[index].payload); TODO
                 uint32_t next = memory_[index].next_index;
                 uint64_t new_head = (static_cast<uint64_t>(tag + 1) << 32) | next;
                 if (free_head_.compare_exchange_weak(head, new_head, std::memory_order_release, std::memory_order_acquire)) break;
@@ -119,7 +112,6 @@ namespace axiom {
             uint32_t tag;
             do {
                 tag = static_cast<uint32_t>(head >> 32);
-                //*reinterpret_cast<uint32_t*>(c->payload) = static_cast<uint32_t>(head & 0xFFFFFFFFu); TODO
                 c->next_index = static_cast<uint32_t>(head & 0xFFFFFFFFu);
                 uint64_t new_head = (static_cast<uint64_t>(tag + 1) << 32) | index;
                 if (free_head_.compare_exchange_weak(head, new_head, std::memory_order_release, std::memory_order_acquire)) break;
