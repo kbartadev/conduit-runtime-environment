@@ -1,6 +1,6 @@
  /**
   * @file core.hpp
-  * @version 0.7.0
+  * @version 0.7.5
   * @author Kristóf Barta
   * @copyright Copyright (c) 2026 Kristóf Barta. All rights reserved.
   *  * PROPRIETARY AND OPEN SOURCE DUAL LICENSE:
