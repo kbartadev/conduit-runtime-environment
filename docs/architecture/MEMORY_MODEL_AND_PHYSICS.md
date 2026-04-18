@@ -16,4 +16,3 @@ The pool uses a 64-bit atomic state:
 ## False Sharing
 
 All atomic counters are padded using `std::hardware\_destructive\_interference\_size` to ensure they reside on distinct L1 cache lines, preventing MESI protocol thrashing.
-

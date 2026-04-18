@@ -19,9 +19,7 @@ Always ensure that `std::hardware\_destructive\_interference\_size` matches the 
 
 You can verify cache misses during the benchmark using `perf`:
 ~~~bash
-
 perf stat -e cache-misses,cache-references ./benchmarks/bench\_conduit
-
 ~~~
 
 A successful lock-free architecture will show near-zero L1 cache misses during a continuous SPSC flow.

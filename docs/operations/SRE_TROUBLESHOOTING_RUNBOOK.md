@@ -17,4 +17,3 @@
 **Check:** Application crash during allocation.
 **Diagnosis:** Buffer overflow in a neighboring slab cell has corrupted `next\_index`.
 **Action:** Run the binary with AddressSanitizer (ASAN) to find the illegal memory write.
-

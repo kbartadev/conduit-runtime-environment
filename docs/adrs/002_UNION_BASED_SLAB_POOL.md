@@ -15,11 +15,8 @@ Lock-free free-lists require storing a next pointer (or index) inside unallocate
 We enforce a `union` structure for all memory cells:
 ~~~cpp
 union {
-
-&#x20;   alignas(Event) unsigned char payload\[sizeof(Event)];
-
-&#x20;   uint32\_t next\_index;
-
+	alignas(Event) unsigned char payload\[sizeof(Event)];
+	uint32\_t next\_index;
 };
 ~~~
 

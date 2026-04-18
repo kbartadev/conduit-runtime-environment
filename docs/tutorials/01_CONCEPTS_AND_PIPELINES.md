@@ -10,12 +10,10 @@ Instead of inheriting from a virtual interface, handlers inherit from themselves
 #include <axiom/axiom.hpp>
 
 struct logger\_stage : axiom::handler\_base<logger\_stage> {
-
-&#x20;   // Overload resolution happens at compile time
-&#x20;   void on(axiom::event\_ptr<my\_event>\& ev) {
-&#x20;       // Implementation
-&#x20;   }
-
+		// Overload resolution happens at compile time
+		void on(axiom::event\_ptr<my\_event>\& ev) {
+		// Implementation
+	}
 };
 ~~~
 
