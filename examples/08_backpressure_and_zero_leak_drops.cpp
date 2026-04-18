@@ -21,8 +21,9 @@ int main() {
     round_robin_switch<telemetry_ping, 1, 2> switch_node;
     switch_node.bind_track(0, bottleneck_pipe);
 
-    cluster<256> router;
-    router.bind<telemetry_ping>(switch_node);
+    cluster router(
+        bind_route<telemetry_ping>(switch_node)
+    );
 
     std::cout << "--- Testing Deterministic Backpressure ---\n";
 

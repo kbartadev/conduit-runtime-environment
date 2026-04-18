@@ -127,37 +127,55 @@ namespace axiom {
     };
 
     // ============================================================
-    // LAYER 3: SCALABLE CLUSTER
+    // LAYER 3: SCALABLE CLUSTER (O(1) Static Topology)
     // ============================================================
 
-    template<std::size_t MaxEvents = 256>
+    // Binds a specific Event type to a target Endpoint at compile-time.
+    template <typename EventType, typename TargetType>
+    struct route_binding {
+        using event_t = EventType;
+        TargetType& target;
+    };
+
+    // Helper factory to create a deterministic route binding.
+    template <typename EventType, typename TargetType>
+    route_binding<EventType, TargetType> bind_route(TargetType& t) {
+        return route_binding<EventType, TargetType>{t};
+    }
+
+    // Compile-time deterministic router. Zero virtual dispatch.
+    template <typename... Routes>
     class cluster {
-        struct slot {
-            void* target = nullptr;
-            void (*dispatch)(void*, void*) = nullptr;
-        };
-        std::array<slot, MaxEvents> slots_{};
+        std::tuple<Routes...> routes_;
 
-        template<typename Sink, typename Event>
-        static void dispatch_stub(void* target, void* ev) {
-            static_cast<Sink*>(target)->handle(std::move(*static_cast<event_ptr<Event>*>(ev)));
-        }
+       public:
+        // Initializes the cluster with a fixed, static routing topology.
+        explicit cluster(Routes... rs) : routes_(rs...) {}
 
-    public:
-        template<typename Event, typename Sink>
-        void bind(Sink& sink) {
-            static_assert(Event::EVENT_ID < MaxEvents, "EVENT_ID exceeds cluster capacity");
-            slots_[Event::EVENT_ID].target = &sink;
-            slots_[Event::EVENT_ID].dispatch = &dispatch_stub<Sink, Event>;
-        }
-
-        template<typename Event>
+        // O(1) Branchless Dispatch via compile-time fold expressions.
+        template <typename Event>
         void send(event_ptr<Event>& ev) {
             if (!ev) return;
-            auto d = slots_[Event::EVENT_ID].dispatch;
-            if (d) d(slots_[Event::EVENT_ID].target, &ev);
+
+            // The compiler completely unrolls this expression at compile-time.
+            // Branches for non-matching types are explicitly discarded, resulting
+            // in a single, direct 'call' instruction in the generated assembly.
+            std::apply(
+                [&ev](auto&... route) {
+                    (..., [&ev, &route]() {
+                        using RouteEventT =
+                            typename std::remove_reference_t<decltype(route)>::event_t;
+
+                        // Compile-time type check
+                        if constexpr (std::is_same_v<RouteEventT, Event>) {
+                            route.target.on(ev);
+                        }
+                    }());
+                },
+                routes_);
         }
 
+        // Rvalue overload for consuming semantics.
         template <typename Event>
         void send(event_ptr<Event>&& ev) {
             auto tmp = std::move(ev);
@@ -208,11 +226,13 @@ namespace axiom {
             if (index < NumTracks) tracks_[index] = &track;
         }
 
-        void handle(event_ptr<Event> ev) {
+        void on(event_ptr<Event>& ev) {
             if (!ev) return;
             std::size_t target = cursor_;
             cursor_ = (cursor_ + 1) % NumTracks;
-            if (tracks_[target] && tracks_[target]->push(ev.get())) ev.release();
+            if (tracks_[target] && tracks_[target]->push(ev.get())) {
+                ev.release();  // Ownership successfully transferred to the conduit
+            }
         }
     };
 
