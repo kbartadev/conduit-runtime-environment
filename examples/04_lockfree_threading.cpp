@@ -1,7 +1,7 @@
 #include <iostream>
 #include <thread>
 
-#include "axiom_conduit/runtime.hpp"
+#include "axiom_conduit/core.hpp"
 
 using namespace axiom;
 

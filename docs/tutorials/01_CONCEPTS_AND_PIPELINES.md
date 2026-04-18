@@ -7,7 +7,7 @@ Welcome to AXIOM. If you are used to Object-Oriented Programming (OOP) with virt
 Instead of inheriting from a virtual interface, handlers inherit from themselves using the Curiously Recurring Template Pattern (CRTP). This allows the compiler to inline every method call.
 
 ~~~cpp
-#include <axiom_conduit/runtime.hpp>
+#include <axiom_conduit/core.hpp>
 
 struct logger\_stage : axiom::handler\_base<logger\_stage> {
 		// Overload resolution happens at compile time

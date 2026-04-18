@@ -1,5 +1,5 @@
  /**
-  * @file axiom.hpp
+  * @file core.hpp
   * @version 0.7.0
   * @author Kristóf Barta
   * @copyright Copyright (c) 2026 Kristóf Barta. All rights reserved.
