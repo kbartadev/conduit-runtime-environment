@@ -22,7 +22,7 @@ AXIOM is not just a library; it is a rigid physical system governed by strict in
 AXIOM requires explicit architectural definitions. You do not just "dispatch" an event; you allocate memory, define a logical pipeline, bind it to a physical sink, map it to a conduit, and route it through a cluster.
 
 ```cpp
-#include <axiom_conduit/runtime.hpp>
+#include <axiom_conduit/core.hpp>
 #include <iostream>
 
 // 1. Define an event using Composition (Fixed Memory Footprint)

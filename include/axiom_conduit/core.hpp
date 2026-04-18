@@ -1,8 +1,8 @@
  /**
   * @file core.hpp
   * @version 0.7.0
-  * @author Kristóf Barta
-  * @copyright Copyright (c) 2026 Kristóf Barta. All rights reserved.
+  * @author KristÃ³f Barta
+  * @copyright Copyright (c) 2026 KristÃ³f Barta. All rights reserved.
   *  * PROPRIETARY AND OPEN SOURCE DUAL LICENSE:
   * This software is licensed under the GNU Affero General Public License v3 (AGPLv3).
   * For commercial use, proprietary licensing, and support, please contact the author.
