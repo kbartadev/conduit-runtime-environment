@@ -88,7 +88,7 @@ core.send(domain.make<trade_event>(...));
 ```
 
 📂 Repository Structure  
-- /include/axiom/ — The monolithic C++20 core header.  
+- /include/axiom_conduit/runtime.hpp — The monolithic C++20 core header.  
 - /examples/ — 13 step-by-step architectural blueprints (from basic pipelines to OS-level graceful draining).  
 - /tests/ — GoogleTest suite proving memory physics, ABA protection, and layout invariants.  
 - /docs/ — In-depth System Architect references, ADRs, and SRE Runbooks.  
