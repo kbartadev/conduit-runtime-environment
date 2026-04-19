@@ -1,7 +1,5 @@
 ﻿#include <gtest/gtest.h>
-
 #include <atomic>
-
 #include "conduit/core.hpp"
 
 using namespace cre;
@@ -20,7 +18,6 @@ struct task : allocated_event<task, 25> {
 
 // ============================================================================
 // TEST 1 — Round‑robin switch must distribute events evenly across tracks.
-// Deterministic O(1) routing: 0 → 1 → 0 → 1 …
 // ============================================================================
 TEST(RoundRobinSwitchTest, round_robin_switch_distributes_events_evenly_across_tracks) {
     pool<task> p(10);
@@ -31,9 +28,15 @@ TEST(RoundRobinSwitchTest, round_robin_switch_distributes_events_evenly_across_t
     switch_node.bind_track(0, track_1);
     switch_node.bind_track(1, track_2);
 
-    switch_node.handle(p.make(nullptr, 100));  // → Track 0
-    switch_node.handle(p.make(nullptr, 200));  // → Track 1
-    switch_node.handle(p.make(nullptr, 300));  // → Track 0
+    // FIX: Store into a variable so it is not a temporary (lvalue)
+    auto ev1 = p.make(nullptr, 100);
+    switch_node.on(ev1);  // use .on instead of .handle
+
+    auto ev2 = p.make(nullptr, 200);
+    switch_node.on(ev2);
+
+    auto ev3 = p.make(nullptr, 300);
+    switch_node.on(ev3);
 
     EXPECT_EQ(track_1.pop(p)->id, 100);
     EXPECT_EQ(track_1.pop(p)->id, 300);
@@ -45,23 +48,26 @@ TEST(RoundRobinSwitchTest, round_robin_switch_distributes_events_evenly_across_t
 
 // ============================================================================
 // TEST 2 — Deterministic drop semantics when a track is full.
-// If the conduit rejects the push, the event_ptr destructor MUST reclaim
-// memory immediately. No leaks, no retries, no undefined behavior.
 // ============================================================================
 TEST(RoundRobinSwitchTest, round_robin_switch_drops_events_deterministically_on_full_track) {
-    std::atomic<int> alive{0};
+    std::atomic<int> alive{ 0 };
     pool<task> p(10);
-    conduit<task, 2> track;  // Effective capacity = 1
+    conduit<task, 2> track; // Capacity 2, but due to the ring buffer only 1 fits
 
     round_robin_switch<task, 1, 2> switch_node;
     switch_node.bind_track(0, track);
 
-    switch_node.handle(p.make(&alive, 1));  // Accepted
+    auto ev1 = p.make(&alive, 1);
+    switch_node.on(ev1);
     EXPECT_EQ(alive.load(), 1);
 
-    // Adversarial: track is full → event must be dropped instantly.
-    switch_node.handle(p.make(&alive, 2));
-    EXPECT_EQ(alive.load(), 1);  // Second event died immediately
+    // Second event: the track is full, on() does not take ownership,
+    // ev2 is destroyed at the end of the scope, alive returns to 1.
+    {
+        auto ev2 = p.make(&alive, 2);
+        switch_node.on(ev2);
+    }
+    EXPECT_EQ(alive.load(), 1);
 
     auto popped = track.pop(p);
     EXPECT_EQ(popped->id, 1);
@@ -69,13 +75,13 @@ TEST(RoundRobinSwitchTest, round_robin_switch_drops_events_deterministically_on_
 
 // ============================================================================
 // TEST 3 — Round‑robin poller must poll tracks evenly.
-// Even with uneven queue depths, fairness must be preserved.
 // ============================================================================
 TEST(RoundRobinPollerTest, round_robin_poller_polls_evenly_across_tracks) {
     pool<task> p(10);
     conduit<task, 10> track_1;
     conduit<task, 10> track_2;
 
+    // .release() stays here because the conduit stores raw pointers
     track_1.push(p.make(nullptr, 1).release());
     track_1.push(p.make(nullptr, 2).release());
     track_2.push(p.make(nullptr, 3).release());
@@ -84,9 +90,8 @@ TEST(RoundRobinPollerTest, round_robin_poller_polls_evenly_across_tracks) {
     poller.bind_track(0, track_1);
     poller.bind_track(1, track_2);
 
-    // Poller MUST alternate:
-    EXPECT_EQ(poller.poll(p)->id, 1);  // Track 1
-    EXPECT_EQ(poller.poll(p)->id, 3);  // Track 2
-    EXPECT_EQ(poller.poll(p)->id, 2);  // Track 1
+    EXPECT_EQ(poller.poll(p)->id, 1);
+    EXPECT_EQ(poller.poll(p)->id, 3);
+    EXPECT_EQ(poller.poll(p)->id, 2);
     EXPECT_EQ(poller.poll(p), nullptr);
 }

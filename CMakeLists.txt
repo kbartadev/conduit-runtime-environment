@@ -47,7 +47,7 @@ if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/CMakeLists.txt")
 endif()
 
 # -------------------------------------------------------------
-# Installation (optional but professional)
+# Installation
 # -------------------------------------------------------------
 install(TARGETS conduit
     EXPORT conduitTargets

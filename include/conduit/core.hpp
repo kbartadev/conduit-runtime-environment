@@ -96,11 +96,19 @@ namespace cre {
             do {
                 index = static_cast<uint32_t>(head & 0xFFFFFFFFu);
                 tag = static_cast<uint32_t>(head >> 32);
-                if (index == END_OF_LIST) std::terminate();
+
+                if (index == END_OF_LIST) {
+                    fprintf(stderr, "Pool exhausted\n");
+                    fflush(stderr); // Ensure GTest captures the output
+                    std::terminate();
+                }
+
                 uint32_t next = memory_[index].next_index;
                 uint64_t new_head = (static_cast<uint64_t>(tag + 1) << 32) | next;
-                if (free_head_.compare_exchange_weak(head, new_head, std::memory_order_release, std::memory_order_acquire)) break;
+                if (free_head_.compare_exchange_weak(head, new_head,
+                    std::memory_order_release, std::memory_order_acquire)) break;
             } while (true);
+
             return memory_[index].payload;
         }
 
