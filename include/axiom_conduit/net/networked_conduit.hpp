@@ -1,3 +1,13 @@
+/**
+ * @file networked_conduit.hpp
+ * @author Kristóf Barta
+ * @copyright Copyright (c) 2026 Kristóf Barta. All rights reserved.
+ *  * PROPRIETARY AND OPEN SOURCE DUAL LICENSE:
+ * This software is licensed under the GNU Affero General Public License v3 (AGPLv3).
+ * For commercial use, proprietary licensing, and support, please contact the author.
+ * See LICENSE and CONTRIBUTING.md for details.
+ */
+
 #pragma once
 
 #include <array>
