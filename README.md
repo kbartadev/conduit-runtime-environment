@@ -68,7 +68,7 @@ int main() {
 
 🧭 Advanced Routing: Spatial Switches & Pollers
 
-CONDUIT explicitly bans Multi-Producer/Multi-Consumer (MPMC) queues to prevent False Sharing and L1 cache invalidation storms. For complex topologies, CONDUIT provides O(1) deterministic Fan-Out and Fan-In primitives.
+CONDUIT explicitly bans Multi-Producer/Multi-Consumer (MPMC) queues internally to prevent False Sharing and L1 cache invalidation storms. For complex topologies, CONDUIT provides O(1) deterministic Fan-Out and Fan-In primitives.
 
 ```cpp
 // Distributing load across 2 isolated hardware threads
