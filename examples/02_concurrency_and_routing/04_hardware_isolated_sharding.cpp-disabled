@@ -1,0 +1,77 @@
+/**
+ * @file 04_hardware_isolated_sharding.cpp
+ * @brief Hardware-isolated sharding using lock-free conduits and deterministic load balancing.
+ */
+#include <atomic>
+#include <chrono>
+#include <iostream>
+#include <thread>
+
+#include "conduit/core.hpp"
+
+using namespace cre;
+
+struct order_event : extends<allocated_event<order_event, 55>> {
+    int order_id;
+    order_event(int id) : order_id(id) {}
+};
+
+void trading_shard(int shard_id, conduit<order_event, 4096>& in_pipe, std::atomic<int>& counter) {
+    while (true) {
+        if (auto ev = in_pipe.pop()) {
+            if (ev->order_id == -1) break;
+            counter.fetch_add(1, std::memory_order_relaxed);
+        }
+        else {
+            std::this_thread::yield();
+        }
+    }
+    std::cout << "[Shard " << shard_id << "] Shutting down.\n";
+}
+
+int main() {
+    // 1. Hardware-isolated conduits with L1 cache locality.
+    conduit<order_event, 4096> shard_0_pipe;
+    conduit<order_event, 4096> shard_1_pipe;
+
+    // 2. Deterministic load balancer (Native to core.hpp)
+    round_robin_switch<order_event, 2, 4096> balancer;
+    balancer.bind_track(0, shard_0_pipe);
+    balancer.bind_track(1, shard_1_pipe);
+
+    // 3. Zero-allocation Edge Router (Native to core.hpp)
+    cluster<256> core_router;
+    core_router.bind<order_event>(balancer);
+
+    std::atomic<int> processed_count{ 0 };
+
+    // 4. Launch shard worker threads.
+    std::thread t0(trading_shard, 0, std::ref(shard_0_pipe), std::ref(processed_count));
+    std::thread t1(trading_shard, 1, std::ref(shard_1_pipe), std::ref(processed_count));
+
+    std::cout << "[Main] Pumping 1,000,000 orders into the lock-free cluster...\n";
+    auto start = std::chrono::high_resolution_clock::now();
+
+    pool<order_event> massive_pool(1048576);
+
+    // Dispatch
+    for (int i = 0; i < 1000000; ++i) {
+        core_router.send(massive_pool.make(i));
+    }
+
+    // Termination sentinels
+    auto stop0 = massive_pool.make(-1);
+    auto stop1 = massive_pool.make(-1);
+    while (!shard_0_pipe.push(stop0)) std::this_thread::yield();
+    while (!shard_1_pipe.push(stop1)) std::this_thread::yield();
+
+    t0.join();
+    t1.join();
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+    std::cout << "[Main] Processed " << processed_count.load() << " orders in " << ms << " ms.\n";
+
+    return 0;
+}

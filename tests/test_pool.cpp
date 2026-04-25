@@ -27,7 +27,7 @@ struct trackable_event : allocated_event<trackable_event, 1> {
 // TEST 1 — O(1) allocation + O(1) reclamation with perfect lifetime accounting.
 // ============================================================================
 TEST(PoolTest, pool_allocates_and_reclaims_in_O1) {
-    std::atomic<int> alive{0};
+    std::atomic<int> alive{ 0 };
     pool<trackable_event> p(10);
 
     {
@@ -48,18 +48,16 @@ TEST(PoolTest, pool_allocates_and_reclaims_in_O1) {
 }
 
 // ============================================================================
-// TEST 2 — Pool exhaustion must terminate deterministically.
-// No fallback allocation, no heap escape, no undefined behavior.
+// TEST 2 — Pool exhaustion enforces safe backpressure instead of crashing.
 // ============================================================================
-TEST(PoolTest, pool_exhaustion_terminates_deterministically) {
-    EXPECT_DEATH(
-        {
-            pool<trackable_event> p(2);
-            auto ev1 = p.make(nullptr, 1);
-            auto ev2 = p.make(nullptr, 2);
-            auto ev3 = p.make(nullptr, 3);  // Must hard‑terminate here.
-        },
-        "Pool exhausted");
+TEST(PoolTest, pool_exhaustion_yields_graceful_backpressure) {
+    pool<trackable_event> p(2);
+    auto ev1 = p.make(nullptr, 1);
+    auto ev2 = p.make(nullptr, 2);
+    auto ev3 = p.make(nullptr, 3);  // Pool is exhausted.
+
+    // In HFT, we drop packets (return nullptr) rather than crashing the node!
+    EXPECT_EQ(ev3, nullptr);
 }
 
 // ============================================================================
@@ -68,7 +66,7 @@ TEST(PoolTest, pool_exhaustion_terminates_deterministically) {
 // ============================================================================
 TEST(PoolTest, pool_concurrent_alloc_dealloc_is_thread_safe) {
     pool<trackable_event> p(10000);
-    std::atomic<int> alive{0};
+    std::atomic<int> alive{ 0 };
 
     auto worker = [&]() {
         for (int i = 0; i < 5000; ++i) {
@@ -76,7 +74,7 @@ TEST(PoolTest, pool_concurrent_alloc_dealloc_is_thread_safe) {
             EXPECT_NE(ev, nullptr);
             // Destructor returns memory instantly when ev goes out of scope.
         }
-    };
+        };
 
     std::vector<std::thread> threads;
     for (int i = 0; i < 8; ++i) threads.emplace_back(worker);

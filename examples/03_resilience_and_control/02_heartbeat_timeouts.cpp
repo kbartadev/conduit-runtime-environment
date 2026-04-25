@@ -1,3 +1,7 @@
+/**
+ * @file 02_heartbeat_timeouts.cpp
+ * @brief Heartbeat and connection timeout handling .
+ */
 #include <chrono>
 #include <iostream>
 #include <thread>

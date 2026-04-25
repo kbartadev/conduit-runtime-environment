@@ -11,7 +11,7 @@
 
 namespace cre::test {
 
-    // --- 1. VERTICAL HIERARCHY ---
+    // --- 1. VERTICAL HIERARCHY (The "What") ---
 
     struct market_message {
         uint64_t receive_time_ns;
@@ -29,7 +29,7 @@ namespace cre::test {
         }
     };
 
-    // --- 2. HORIZONTAL HANDLERS ---
+    // --- 2. HORIZONTAL HANDLERS (The "Who") ---
 
     // Handler A: Low-level Infrastructure (Only cares about base timing)
     struct latency_monitor : handler_base<latency_monitor> {
@@ -57,7 +57,7 @@ namespace cre::test {
 
     // --- 3. OMNIBUS TEST CASE ---
 
-    TEST(OmnibusIntegrationTest, validates_matrix_dispatch_flow) {
+    TEST(MixedMatrixTest, validates_cross_dimensional_dispatch) {
         // Setup memory and components
         pool<limit_order> order_pool(16);
         latency_monitor infra;

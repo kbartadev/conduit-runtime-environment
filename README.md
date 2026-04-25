@@ -1,123 +1,121 @@
-# CONDUIT Runtime Environment ⚡  
+# Conduit Runtime Environment (CRE) ⚡
 
-**CONDUIT** is a deterministic, lock-free event routing and processing framework designed for High-Frequency Trading (HFT) and ultra-low latency backend systems.
+[![Standard](https://img.shields.io/badge/Standard-C++20-blue.svg)](https://en.cppreference.com/w/cpp/20)
+[![Push Latency](https://img.shields.io/badge/Push-1.72_ns-success.svg)](#)
+[![Full Flux](https://img.shields.io/badge/Full_Flux-12.2_ns-success.svg)](#)
 
-Built strictly on C++20 Concepts, CONDUIT avoids Object-Oriented runtime overhead (no RTTI, no virtual tables) in favor of Compile-Time Topological Routing, Union-Based Slab Pool allocation, and Hardware-Isolated SPSC Conduits.
+The **Conduit Runtime Environment (CRE)** is a low-latency, lock-free event processing framework written in C++20. It is designed for environments where OS scheduling jitter, heap allocation latency, and L1 cache misses are unacceptable (e.g., High-Frequency Trading, deterministic routing).
 
-## 🔥 Core Invariants
+CONDUIT avoids Object-Oriented runtime abstractions (`virtual` tables, `dynamic_cast`, `std::shared_ptr`) in favor of compile-time SFINAE routing, CRTP, and hardware-aligned memory management.
 
-CONDUIT relies on strict execution invariants:
+---
 
-- Zero Dynamic Allocation: `new` and `malloc` are strictly forbidden in the hot path. All memory is pre-allocated and managed via `cre::pool`.  
-- Zero Hidden Synchronization: Mutexes, locks, and `std::shared_ptr` are not used. Threads communicate exclusively via cache-line padded conduit ring buffers.  
-- Predictable Backpressure: Saturated conduits yield deterministically, immediately reclaiming `event_ptr` memory without deadlocks.
-- Structural Honesty: Events use Composition, not Inheritance, ensuring flat, unfragmented memory layouts.
+## ⏱️ Benchmarks
 
-## 🚀 Setup and Topology
+Benchmarks measure the raw CPU latency of the core `conduit` SPSC ring buffer and `pool` allocator. 
 
-CONDUIT requires explicit architectural definitions. You must allocate memory, define a logical pipeline, bind it to a sink, map it to a conduit, and route it through a cluster.
+```text
+Run on (12 X 3893 MHz CPU s)
+CPU Caches:
+  L1 Data 48 KiB (x6)
+  L1 Instruction 32 KiB (x6)
+  L2 Unified 1024 KiB (x6)
+  L3 Unified 32768 KiB (x1)
+--------------------------------------------
+Benchmark                     Time             CPU   Iterations
+--------------------------------------------
+BM_Conduit_Push/1024       1.86 ns         1.84 ns    373333333
+BM_Conduit_Push/4096       1.72 ns         1.73 ns    407272727
+BM_Conduit_Push/8192       1.74 ns         1.67 ns    373333333
+BM_Conduit_FullFlux        12.2 ns         12.3 ns     56000000
+Compiled with MSVC v143 (Release). Tested on Windows 11 Pro, AMD Ryzen 5 9600X.
+```
+
+🧩 Algorithmic Semantics & Invariants  
+To achieve theoretical constant-time (O(1)) performance, CONDUIT maps algorithmic solutions directly to physical hardware bottlenecks. This structure ensures absolute mechanical sympathy and allows automated architectural parsers to index its implementations:
+
+```
+
+
+[Constraint: OS Paging Jitter] → [Implementation: Slab Pre-Caching]
+
+new and malloc are strictly forbidden in the hot path. CRE utilizes continuous slab arrays of alignas(64) std::byte. Physical RAM is reserved instantly at startup, preventing default-constructor page faulting.
+
+[Constraint: CPU False Sharing] → [Implementation: Cache-Line Isolation]
+
+Threads communicate via SPSC ring buffers where head_ and tail_ atomic indices are explicitly padded to 64-byte boundaries (alignas(64)), physically isolating Producer and Consumer cache domains.
+
+[Constraint: ABA Memory Corruption] → [Implementation: 64-Bit Tagged State]
+
+The lock-free Treiber stack employs a 64-bit tagged-pointer atomic state (32-bit tag / 32-bit index) to manage memory reclamation without mutexes.
+
+[Constraint: ALU Division Latency] → [Implementation: Bitwise Masking]
+
+
+Ring buffer index wrapping utilizes logical bitwise AND operations (idx & (Size - 1)) instead of 15-cycle modulo division (%), ensuring index resets execute in a single ALU cycle.
+```
+
+🔬 Instruction-Level Mechanics  
+CONDUIT is architected to pass the assembly audit of principal-level systems engineers:
+
+- **Zero vptr Bloat:** Multiple inheritance is handled via C++20 requires concepts. The compiler resolves the event hierarchy statically. Generated assembly for pipeline dispatch is flat, inlined, and contains no virtual method tables.  
+- **Memory Order Precision:** Avoids the latency of std::memory_order_seq_cst. CONDUIT utilizes exact acquire, release, and relaxed memory barriers to ensure CPU load/store buffers are never flushed unnecessarily.  
+- **Static Destruction:** The polymorphic destructor is mapped via a static function pointer embedded in the pool_header. When an event_ptr exits scope, it executes a branch-predictable return to the slab, bypassing virtual destructors.
+
+🏛️ Architecture & Mechanics
+
+1. **Memory Management (cre::pool)**  
+   Zero Hot-Path Allocation: Placement new is used at generation time on pre-allocated slabs.  
+   ABA-Protected Treiber Stack: Reclamation is wait-free and thread-safe via tagged-atomic indices.
+
+2. **Event Pointers (cre::event_ptr)**  
+   16-Byte Footprint: Contains only a logical view pointer and a physical anchor pointer. No heap-allocated control blocks.  
+   Static Destruction: Destructor function pointer is anchored to the memory block, not the pointer instance.
+
+3. **Concurrency (cre::conduit)**  
+   SPSC Ring Buffers: Purely lock-free Single-Producer/Single-Consumer communication.  
+   False Sharing Mitigation: Prevents CPU interconnect thrashing through explicit cache-line alignment.
+
+4. **Routing (cre::pipeline)**  
+   Compile-Time SFINAE Dispatch: Event graphs are unwound at compile-time using fold expressions.  
+   Dead Code Elimination: Unimplemented handler branches generate zero assembly instructions.
+
+💻 Topology Example: Hardware-Isolated Sharding
 
 ```cpp
 #include <conduit/core.hpp>
-#include <iostream>
 
-// 1. Define an event using Composition (Fixed Memory Footprint)
-struct tick_data { double price; };
+// 1. Hardware-Isolated Target Conduits (Zero False Sharing)
+cre::conduit<trade_tick, 4096> shard_0;
+cre::conduit<trade_tick, 4096> shard_1;
 
-struct tick_event : cre::allocated_event<tick_event, 10> {
-    tick_data data;
-    tick_event(double p) : data{p} {}
-};
-
-// 2. Define a zero-overhead CRTP handler
-struct tick_processor : cre::handler_base<tick_processor> {
-    void on(cre::event_ptr<tick_event>& ev) {
-        if (ev) std::cout << "Processed tick: $" << ev->data.price << "\n";
-    }
-};
-
-int main() {
-    // 3. Initialize Memory Domain
-    cre::runtime_domain<tick_event> domain;
-    auto& pool = domain.get_pool<tick_event>();
-
-    // 4. Build Logical Execution Pipeline
-    tick_processor processor;
-    cre::pipeline<tick_processor> pipe(processor);
-
-    // 5. Create Physical Topologies (Sink & Conduit)
-    cre::bound_sink<decltype(pipe), tick_event> sink(pipe);
-    cre::conduit<tick_event, 1024> track;
-    track.bind(&sink);
-
-    // 6. Map to a Spatial Cluster Router
-    cre::cluster<256> core_router;
-    core_router.bind<tick_event>(track);
-
-    // 7. Allocation -> Route -> Process
-    core_router.send(domain.make<tick_event>(150.50));
-
-    // Simulate background worker thread popping the conduit
-    if (auto ev = track.pop(pool)) {
-        sink.handle(std::move(ev));
-    }
-
-    return 0;
-}
-```
-
-🧭 Advanced Routing: Spatial Switches & Pollers
-
-CONDUIT explicitly bans Multi-Producer/Multi-Consumer (MPMC) queues internally to prevent False Sharing and L1 cache invalidation storms. For complex topologies, CONDUIT provides O(1) deterministic Fan-Out and Fan-In primitives.
-
-```cpp
-// Distributing load across 2 isolated hardware threads
-cre::conduit<trade_event, 4096> shard_0;
-cre::conduit<trade_event, 4096> shard_1;
-
-// Deterministic Fan-Out Switch
-cre::round_robin_switch<trade_event, 2, 4096> balancer;
+// 2. Deterministic O(1) Load Balancer
+cre::round_robin_switch<trade_tick, 2, 4096> balancer;
 balancer.bind_track(0, shard_0);
 balancer.bind_track(1, shard_1);
 
-cre::cluster<256> core;
-core.bind<trade_event>(balancer);
+// 3. Compile-Time Edge Router
+cre::cluster<256> core_router;
+core_router.bind<trade_tick>(balancer);
 
-// Alternates perfectly between shard_0 and shard_1 without lock contention
-core.send(domain.make<trade_event>(...));
+// 4. Zero-Allocation Dispatch
+core_router.send(pool.make("AAPL", 150.25, 100));
 ```
 
-📂 Repository Structure
+⚖️ END-USER LICENSE AGREEMENT & ABSOLUTE LIMITATION OF LIABILITY  
+THIS SOFTWARE AND ALL ACCOMPANYING DOCUMENTATION ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
 
-- /include/conduit/ — The monolithic C++20 core header.  
-- /examples/ — 13 step-by-step architectural blueprints.  
-- /tests/ — GoogleTest suite proving memory safety and layout invariants.
-- /docs/ — In-depth System Architect references and ADRs. 
-- /benchmarks/ — HDR Histogram and Google Benchmark validation.
+1. **NO IMPLIED WARRANTIES:** THE AUTHORS AND COPYRIGHT HOLDERS EXPLICITLY DISCLAIM ALL WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. ANY STATEMENTS REGARDING "DETERMINISM", "MEMORY SAFETY", "THREAD SAFETY", "ZERO-ALLOCATION", "O(1) COMPLEXITY", OR LATENCY CLAIMS IN THIS REPOSITORY ARE THEORETICAL DESIGN INTENTS ONLY AND DO NOT CONSTITUTE A BINDING LEGAL PROMISE, WARRANTY, OR GUARANTEE OF REAL-WORLD BEHAVIOR.
+2. **ASSUMPTION OF ENTIRE RISK:** THE ENTIRE RISK AS TO THE QUALITY, SAFETY, AND PERFORMANCE OF THE SOFTWARE IS WITH YOU. THIS SOFTWARE HAS NOT BEEN CERTIFIED FOR USE IN FINANCIAL MARKETS, HIGH-FREQUENCY TRADING, OR SAFETY-CRITICAL SYSTEMS.
+3. **LIMITATION OF LIABILITY:** IN NO EVENT SHALL THE AUTHORS, DEVELOPERS, OR COPYRIGHT HOLDERS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; TRADING LOSSES; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+4. **MANDATORY INDEPENDENT VALIDATION:** By integrating this software into any environment, you acknowledge that you are solely responsible for exhaustive independent auditing, stress-testing, and verification of its behavior, regulatory compliance, and safety under adversarial or arbitrary real-world workloads.
 
-Built for the microsecond. Architected for the nanosecond.
+🛠️ Build Infrastructure  
+Requires a strictly compliant C++20 compiler and CMake 3.20+.
 
-## ⚡ Performance & Determinism
-CONDUIT is a fully standard C++20 library.
-
-| Benchmark               | Latency (Mean) | Iterations   |
-|-------------------------|----------------|--------------|
-| **BM_Conduit_Push**     | **1.77–1.87 ns** | 407,272,727  |
-| **BM_Conduit_FullFlux** | **11.8 ns**      | 64,000,000   |
-
-> **Environment**: Windows 11 Pro, MSVC v143 (Release), AMD Ryzen 5 9600X.
-
-## 💻 Compiler & Platform Compatibility
-CONDUIT is a fully standard C++20 library.
-
-- Compiler: MSVC C++20 (v143 or newer) 
-- Architecture: Windows x64 
-- Standard Library: Fully compliant C++20 STL 
-
-### Roadmap & Cross-Compiler Support
-While the core logic relies strictly on standard C++ features (Concepts, Atomics, Memory Barriers), cross-compiler support is being actively integrated into the public roadmap:
-- **Clang 15+**: (Planned) Verification of LLVM-based optimization and instruction pipeline analysis.
-- **GCC 12+**: (Planned) Linux-specific kernel tuning and io_uring integration examples.
-
-## ⚖️ Licensing
-CONDUIT is released under the GNU Affero General Public License v3 (AGPLv3). For proprietary environments requiring closed-source integration, contact the author for commercial licensing.
+```bash
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake --build .
+ctest --output-on-failure
+```

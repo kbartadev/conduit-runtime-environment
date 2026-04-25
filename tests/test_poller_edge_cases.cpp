@@ -40,11 +40,14 @@ TEST(PollerEdgeCases, poller_prevents_starvation_under_asymmetric_load) {
     // This proves starvation‑free fairness under uneven load.
 
     auto ev1 = poller.poll(p);
+    ASSERT_TRUE(ev1) << "CRITICAL: A poller.poll() üres (null) pointert adott vissza!";
     EXPECT_EQ(ev1->source_track, 1);
 
     auto ev2 = poller.poll(p);
+    ASSERT_TRUE(ev2);
     EXPECT_EQ(ev2->source_track, 2);
 
     auto ev3 = poller.poll(p);
+    ASSERT_TRUE(ev3);
     EXPECT_EQ(ev3->source_track, 1);
 }

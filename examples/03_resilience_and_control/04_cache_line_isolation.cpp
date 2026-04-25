@@ -1,3 +1,7 @@
+/**
+ * @file 04_cache_line_isolation.cpp
+ * @brief Cache line isolation example for stateful handlers.
+ */
 #include <array>
 #include <iostream>
 

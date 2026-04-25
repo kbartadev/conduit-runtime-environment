@@ -1,3 +1,7 @@
+/**
+ * @file 01_cascading_pipeline.cpp
+ * @brief Cascading pipeline example with multi-layer events.
+ */
 #include <iostream>
 #include <string>
 
@@ -66,8 +70,11 @@ int main() {
     pipeline<request_processor> pipe(processor);
 
     // Two complex events allocated and processed in O(1).
-    pipe.dispatch(domain.make<http_request>("192.168.1.1", 1042, "GET /index.html"));
-    pipe.dispatch(domain.make<http_request>("10.0.0.5", 9999, "POST /login"));
+    auto req1 = domain.make<http_request>("192.168.1.100", 404, "GET /index.html");
+    pipe.dispatch(req1);
+
+    auto req2 = domain.make<http_request>("10.0.0.5", 200, "POST /login");
+    pipe.dispatch(req2);
 
     return 0;
 }

@@ -1,3 +1,7 @@
+/**
+ * @file 01_lockfree_spsc_bus.cpp
+ * @brief Structural recognition using C++20 Concepts.
+ */
 #include <iostream>
 #include <thread>
 

@@ -1,5 +1,6 @@
 /**
   * @file core.hpp
+  * @brief Enterprise-grade, Zero-Overhead Conduit Runtime Environment Core
   * @author Kristóf Barta
   * @copyright Copyright (c) 2026 Kristóf Barta. All rights reserved.
   * PROPRIETARY AND OPEN SOURCE DUAL LICENSE:
@@ -8,27 +9,33 @@
   * See LICENSE and CONTRIBUTING.md for details.
   */
 
+  /**
+ * @file core.hpp
+ * @brief Enterprise-grade, Zero-Overhead Conduit Runtime Environment Core
+ * @copyright Copyright (c) 2026. All rights reserved.
+ */
+
 #pragma once
 
 #include <atomic>
-#include <memory>
 #include <cstdint>
 #include <cstddef>
 #include <new>
 #include <utility>
 #include <tuple>
 #include <array>
+#include <vector>
 #include <concepts>
 #include <type_traits>
 #include <cstring>
 
 namespace cre {
 
-    template<typename Event> class pool;
+    constexpr std::size_t CACHE_LINE_SIZE = 64;
 
-    // ============================================================
+    // ===========================================================;
     // LAYER 1: BASE EVENT & OWNERSHIP
-    // ============================================================
+    // ===========================================================;
 
     template<typename Derived, uint8_t RoutingID>
     struct allocated_event {
@@ -36,380 +43,384 @@ namespace cre {
 
         static void* operator new(std::size_t) = delete;
         static void* operator new(std::size_t, void* ptr) noexcept { return ptr; }
-
         static void operator delete(void*, void*) noexcept {}
         static void operator delete(void*) = delete;
     };
 
+    // ===========================================================;
+    // LAYER 2: HIERARCHICAL EXTENSION
+    // ===========================================================;
+
+    template<typename... Bases>
+    struct extends : public Bases... {
+        using base_types = std::tuple<Bases*...>;
+    };
+
+    // ===========================================================;
+    // LAYER 2.5: EXTENDED EVENT
+    // ===========================================================;
+
+    template<typename Derived, uint8_t RoutingID, typename... Bases>
+    struct extended_event : public allocated_event<Derived, RoutingID>, public extends<Bases...> {
+    };
+
+    // ===========================================================;
+    // LAYER 3: DETERMINISTIC SMART POINTER
+    // ===========================================================;
+
+    struct non_owning_tag {};
+
     template<typename T>
-    struct pool_deleter {
-        pool<T>* parent_pool = nullptr;
-
-        void operator()(T* ptr) const noexcept {
-            if (ptr) {
-                ptr->~T();
-                if (parent_pool) parent_pool->deallocate_raw(ptr); 
-            }
-        }
-    };
-
-    template<typename T>
-    using event_ptr = std::unique_ptr<T, pool_deleter<T>>;
-
-    // ============================================================
-    // LAYER 2: WAIT-FREE MPSC SLAB POOL
-    // Implementation of MPSC free-list synchronization.
-    // ============================================================
-
-#ifdef __cpp_lib_hardware_interference_size
-    using std::hardware_destructive_interference_size;
-    constexpr std::size_t CACHE_LINE_SIZE = hardware_destructive_interference_size;
-#else
-    constexpr std::size_t CACHE_LINE_SIZE = 64;
-#endif
-
-    template <typename Event>
-    struct cell {
-        union {
-            alignas(Event) unsigned char payload[sizeof(Event)];
-            uint32_t next_index;
-        };
-    };
-
-    template <typename Event>
-    class pool {
-        std::unique_ptr<cell<Event>[]> memory_;
-
-        // FAST PATH: Owned by the pinned Node thread. Zero atomic overhead.
-        uint32_t local_head_{0};
-
-        // RETURN PATH: Atomic MPSC LIFO stack for events returning from other threads.
-        // Isolated to prevent false sharing with the fast path.
-        alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> shared_head_{0xFFFFFFFFu};
-
-        uint32_t capacity_;
-        static constexpr uint32_t END_OF_LIST = 0xFFFFFFFF;
-
-       public:
-        explicit pool(uint32_t capacity = 1024) : capacity_(capacity) {
-            memory_ = std::make_unique<cell<Event>[]>(capacity);
-            for (uint32_t i = 0; i < capacity - 1; ++i) {
-                memory_[i].next_index = i + 1;
-            }
-            memory_[capacity - 1].next_index = END_OF_LIST;
-
-            local_head_ = 0;
-            shared_head_.store(static_cast<uint64_t>(END_OF_LIST), std::memory_order_relaxed);
-        }
-
-        // Wait-Free Allocation
-        void* allocate_raw() {
-            // Check local single-threaded cache first
-            if (local_head_ != END_OF_LIST) {
-                uint32_t index = local_head_;
-                local_head_ = memory_[index].next_index;
-                return memory_[index].payload;
-            }
-
-            // Refill local cache from shared return path using atomic exchange
-            uint64_t stolen_stack = shared_head_.exchange(static_cast<uint64_t>(END_OF_LIST),
-                                                          std::memory_order_acquire);
-            uint32_t index = static_cast<uint32_t>(stolen_stack & 0xFFFFFFFFu);
-
-            // Memory pool exhausted, returning nullptr
-            if (index == END_OF_LIST) return nullptr;
-
-            local_head_ = memory_[index].next_index;
-            return memory_[index].payload;
-        }
-
-        // Thread-safe return path used by I/O threads or other Nodes
-        void deallocate_raw(void* raw_ptr) noexcept {
-            auto* c = reinterpret_cast<cell<Event>*>(raw_ptr);
-            uint32_t index = static_cast<uint32_t>(c - memory_.get());
-
-            uint64_t old_head = shared_head_.load(std::memory_order_relaxed);
-            uint64_t new_head;
-
-            // CAS loop for the MPSC return path.
-            // Tagged pointer prevents ABA and ensures eventual consistency.
-            do {
-                uint32_t tag = static_cast<uint32_t>(old_head >> 32);
-                c->next_index = static_cast<uint32_t>(old_head & 0xFFFFFFFFu);
-                new_head = (static_cast<uint64_t>(tag + 1) << 32) | index;
-            } while (!shared_head_.compare_exchange_weak(
-                old_head, new_head, std::memory_order_release, std::memory_order_relaxed));
-        }
-
-        // ============================================================
-        // CONDUIT HIGH-LEVEL API
-        // ============================================================
-
-        // Standard construction for Compute Nodes
-        template <typename... Args>
-        [[nodiscard]] event_ptr<Event> make(Args&&... args) {
-            void* raw = allocate_raw();
-            if (!raw) return nullptr;
-            Event* ev = new (raw) Event(std::forward<Args>(args)...);
-            return event_ptr<Event>(ev, pool_deleter<Event>{this});
-        }
-
-        // Provides raw memory for in-place writing (e.g., from socket)
-        [[nodiscard]] event_ptr<Event> make_uninitialized() {
-            void* raw = allocate_raw();
-            if (!raw) return nullptr;
-            return event_ptr<Event>(reinterpret_cast<Event*>(raw), pool_deleter<Event>{this});
-        }
-    };
-
-    // ============================================================
-    // LAYER 3: SCALABLE CLUSTER (Static Topology)
-    // ============================================================
-
-    // Binds a specific Event type to a target Endpoint at compile-time.
-    template <typename EventType, typename TargetType>
-    struct route_binding {
-        using event_t = EventType;
-        TargetType& target;
-    };
-
-    // Helper factory to create a deterministic route binding.
-    template <typename EventType, typename TargetType>
-    route_binding<EventType, TargetType> bind_route(TargetType& t) {
-        return route_binding<EventType, TargetType>{t};
-    }
-
-    // Compile-time deterministic router. Static dispatch (inlined).
-    template <typename... Routes>
-    class cluster {
-        std::tuple<Routes...> routes_;
-
-       public:
-        // Initializes the cluster with a fixed, static routing topology.
-        explicit cluster(Routes... rs) : routes_(rs...) {}
-
-        // Branchless Dispatch via compile-time fold expressions.
-        template <typename Event>
-        void send(event_ptr<Event>& ev) {
-            if (!ev) return;
-
-            // The compiler unrolls this expression at compile-time.
-            std::apply(
-                [&ev](auto&... route) {
-                    (..., [&ev, &route]() {
-                        using RouteEventT =
-                            typename std::remove_reference_t<decltype(route)>::event_t;
-
-                        // Compile-time type check
-                        if constexpr (std::is_same_v<RouteEventT, Event>) {
-                            route.target.on(ev);
-                        }
-                    }());
-                },
-                routes_);
-        }
-
-        // Rvalue overload for consuming semantics.
-        template <typename Event>
-        void send(event_ptr<Event>&& ev) {
-            auto tmp = std::move(ev);
-            send(tmp);
-        }
-    };
-
-    // ============================================================
-    // LAYER 4: PHYSICAL TRANSPORT (CONDUIT)
-    // ============================================================
-
-    template<typename Event, uint32_t Capacity>
-    class conduit {
-        alignas(CACHE_LINE_SIZE) std::atomic<uint32_t> write_idx_{0};
-        alignas(CACHE_LINE_SIZE) std::atomic<uint32_t> read_idx_{0};
-        alignas(CACHE_LINE_SIZE) Event* ring_[Capacity]{};
+    class event_ptr {
+        T* ptr_;
+        void (*deleter_)(void*, void*);
+        void* pool_ctx_;
 
     public:
-        bool push(Event* ev) noexcept {
-            uint32_t curr_w = write_idx_.load(std::memory_order_relaxed);
-            uint32_t next_w = (curr_w + 1) % Capacity;
-            if (next_w == read_idx_.load(std::memory_order_acquire)) return false;
-            ring_[curr_w] = ev;
-            write_idx_.store(next_w, std::memory_order_release);
+        event_ptr() noexcept : ptr_(nullptr), deleter_(nullptr), pool_ctx_(nullptr) {}
+        event_ptr(std::nullptr_t) noexcept : event_ptr() {}
+
+        event_ptr(T* p, void (*del)(void*, void*), void* ctx) noexcept
+            : ptr_(p), deleter_(del), pool_ctx_(ctx) {
+        }
+
+        ~event_ptr() { reset(); }
+
+        event_ptr(event_ptr&& other) noexcept
+            : ptr_(other.ptr_), deleter_(other.deleter_), pool_ctx_(other.pool_ctx_) {
+            other.ptr_ = nullptr;
+            other.deleter_ = nullptr;
+        }
+
+        event_ptr& operator=(event_ptr&& other) noexcept {
+            if (this != &other) {
+                reset();
+                ptr_ = other.ptr_;
+                deleter_ = other.deleter_;
+                pool_ctx_ = other.pool_ctx_;
+                other.ptr_ = nullptr;
+                other.deleter_ = nullptr;
+            }
+            return *this;
+        }
+
+        event_ptr(const event_ptr&) = delete;
+        event_ptr& operator=(const event_ptr&) = delete;
+
+        template<typename U>
+            requires std::derived_from<U, T>
+        event_ptr(const event_ptr<U>& other, non_owning_tag) noexcept
+            : ptr_(static_cast<T*>(other.get())), deleter_(nullptr), pool_ctx_(nullptr) {
+        }
+
+        void reset() noexcept {
+            if (ptr_ && deleter_) deleter_(pool_ctx_, ptr_);
+            ptr_ = nullptr;
+            deleter_ = nullptr;
+        }
+
+        T* release() noexcept {
+            T* temp = ptr_;
+            ptr_ = nullptr;
+            deleter_ = nullptr;
+            return temp;
+        }
+
+        T* get() const noexcept { return ptr_; }
+        T* operator->() const noexcept { return ptr_; }
+        T& operator*() const noexcept { return *ptr_; }
+        explicit operator bool() const noexcept { return ptr_ != nullptr; }
+
+        bool operator==(std::nullptr_t) const noexcept { return ptr_ == nullptr; }
+        bool operator!=(std::nullptr_t) const noexcept { return ptr_ != nullptr; }
+        friend bool operator==(std::nullptr_t, const event_ptr& p) noexcept { return p.ptr_ == nullptr; }
+        friend bool operator!=(std::nullptr_t, const event_ptr& p) noexcept { return p.ptr_ != nullptr; }
+    };
+
+    // ===========================================================;
+    // LAYER 4: O(1) LOCK-FREE MEMORY POOL
+    // ===========================================================;
+
+    template<typename T>
+    class pool {
+        union cell {
+            alignas(T) std::byte data[sizeof(T)];
+            uint64_t next;
+        };
+
+        std::vector<cell> memory_;
+        alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> free_head_;
+
+    public:
+        static void release_to_pool(void* ctx, void* ptr) noexcept {
+            static_cast<pool<T>*>(ctx)->free(static_cast<T*>(ptr));
+        }
+
+        explicit pool(std::size_t capacity) : memory_(capacity) {
+            for (std::size_t i = 0; i < capacity - 1; ++i) {
+                memory_[i].next = i + 1;
+            }
+            memory_[capacity - 1].next = 0xFFFFFFFF;
+            free_head_.store(0, std::memory_order_relaxed);
+        }
+
+        pool(pool&& other) noexcept : memory_(std::move(other.memory_)) {
+            free_head_.store(other.free_head_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        }
+
+        template<typename... Args>
+        [[nodiscard]] event_ptr<T> make(Args&&... args) {
+            uint64_t head = free_head_.load(std::memory_order_acquire);
+            uint64_t next;
+            do {
+                uint32_t idx = head & 0xFFFFFFFF;
+                if (idx == 0xFFFFFFFF) return event_ptr<T>(nullptr);
+
+                next = memory_[idx].next;
+                uint64_t new_head = ((head >> 32) + 1) << 32 | (next & 0xFFFFFFFF);
+
+                if (free_head_.compare_exchange_weak(head, new_head, std::memory_order_release, std::memory_order_relaxed)) {
+                    T* ptr = reinterpret_cast<T*>(&memory_[idx].data);
+                    new (ptr) T(std::forward<Args>(args)...);
+                    return event_ptr<T>(ptr, release_to_pool, this);
+                }
+            } while (true);
+        }
+
+        void free(T* ptr) noexcept {
+            if (!ptr) return;
+            ptr->~T();
+            std::size_t idx = reinterpret_cast<cell*>(ptr) - memory_.data();
+            uint64_t head = free_head_.load(std::memory_order_acquire);
+            do {
+                memory_[idx].next = head & 0xFFFFFFFF;
+                uint64_t new_head = ((head >> 32) + 1) << 32 | (idx & 0xFFFFFFFF);
+                if (free_head_.compare_exchange_weak(head, new_head, std::memory_order_release, std::memory_order_relaxed)) {
+                    break;
+                }
+            } while (true);
+        }
+    };
+
+    // ===========================================================;
+    // LAYER 5: SPSC RING BUFFER (CONDUIT)
+    // ===========================================================;
+
+    template<typename T, std::size_t Size>
+    class conduit {
+        std::array<T*, Size> ring_;
+        alignas(CACHE_LINE_SIZE) std::atomic<std::size_t> write_idx_{ 0 };
+        alignas(CACHE_LINE_SIZE) std::atomic<std::size_t> read_idx_{ 0 };
+
+    public:
+        bool push(T* ptr) {
+            auto current_write = write_idx_.load(std::memory_order_relaxed);
+            auto next_write = (current_write + 1) % Size;
+
+            if (next_write == read_idx_.load(std::memory_order_acquire)) {
+                return false;
+            }
+
+            ring_[current_write] = ptr;
+            write_idx_.store(next_write, std::memory_order_release);
             return true;
         }
 
-        event_ptr<Event> pop(pool<Event>& p) noexcept {
-            uint32_t curr_r = read_idx_.load(std::memory_order_relaxed);
-            if (curr_r == write_idx_.load(std::memory_order_acquire)) return nullptr;
-            Event* ev = ring_[curr_r];
-            read_idx_.store((curr_r + 1) % Capacity, std::memory_order_release);
-            return event_ptr<Event>(ev, pool_deleter<Event>{&p});
-        }
-    };
-
-    // ============================================================
-    // LAYER 5: FAN-OUT & FAN-IN
-    // ============================================================
-
-    template<typename Event, std::size_t NumTracks, uint32_t TrackCapacity = 1024>
-    class round_robin_switch {
-        conduit<Event, TrackCapacity>* tracks_[NumTracks]{};
-        std::size_t cursor_ = 0;
-
-    public:
-        void bind_track(std::size_t index, conduit<Event, TrackCapacity>& track) {
-            if (index < NumTracks) tracks_[index] = &track;
-        }
-
-        void on(event_ptr<Event>& ev) {
-            if (!ev) return;
-            std::size_t target = cursor_;
-            cursor_ = (cursor_ + 1) % NumTracks;
-
-            if (tracks_[target] && tracks_[target]->push(ev.get())) {
-                ev.release(); // Ownership successfully transferred
+        event_ptr<T> pop(pool<T>& p) {
+            auto current_read = read_idx_.load(std::memory_order_relaxed);
+            if (current_read == write_idx_.load(std::memory_order_acquire)) {
+                return event_ptr<T>(nullptr);
             }
+
+            T* ptr = ring_[current_read];
+            read_idx_.store((current_read + 1) % Size, std::memory_order_release);
+            return event_ptr<T>(ptr, pool<T>::release_to_pool, &p);
         }
     };
 
-    template<typename Event, std::size_t NumTracks, uint32_t TrackCapacity = 1024>
-    class round_robin_poller {
-        conduit<Event, TrackCapacity>* tracks_[NumTracks]{};
-        std::size_t cursor_ = 0;
+    // ===========================================================;
+    // LAYER 6: HANDLERS & DISPATCH (Zero-Cost Mutating Pipeline)
+    // ===========================================================;
 
-    public:
-        void bind_track(std::size_t index, conduit<Event, TrackCapacity>& track) {
-            if (index < NumTracks) tracks_[index] = &track;
-        }
+    template<typename Derived>
+    struct handler_base {};
 
-        event_ptr<Event> poll(pool<Event>& p) {
-            for (std::size_t i = 0; i < NumTracks; ++i) {
-                std::size_t target = (cursor_ + i) % NumTracks;
-                if (tracks_[target]) {
-                    if (auto ev = tracks_[target]->pop(p)) {
-                        cursor_ = (target + 1) % NumTracks;
-                        return ev;
-                    }
-                }
-            }
-            return nullptr;
-        }
-    };
-
-    // ============================================================
-    // LAYER 6: UNIFIED DISPATCH PIPELINE
-    // ============================================================
-
-    template <typename T>
-    struct handler_base {
-        using self_t = T;
-    };
-
-    template <typename Handler, typename Event>
-    concept CanHandleExact = requires(Handler h, event_ptr<Event>& ev) {
-        { h.on(ev) };
-    };
-
-    template <typename Event>
-    concept HasConduitChain = requires { typename Event::conduit_chain; };
-
-    template <typename TargetEvent, typename SourceEvent>
-    inline event_ptr<TargetEvent> make_alias_ptr(event_ptr<SourceEvent>& source) noexcept {
-        auto* raw = static_cast<TargetEvent*>(static_cast<void*>(source.get()));
-        return event_ptr<TargetEvent>(raw, pool_deleter<TargetEvent>{nullptr});
-    }
-
-    template <typename... Handlers>
+    template<typename... Handlers>
     class pipeline {
         std::tuple<Handlers&...> handlers_;
 
-       public:
-        explicit pipeline(Handlers&... hs) : handlers_(hs...) {}
+    public:
+        pipeline(Handlers&... h) : handlers_(h...) {}
 
-        template <typename Event>
+        template<typename Event>
         void dispatch(event_ptr<Event>& ev) {
-            if (!ev) return;
-            std::apply(
-                [&](auto&... h) {
-                    (..., [&]() {
-                        if (!ev) return;
-                        execute_unified_dispatch<Event>(h, ev);
-                    }());
-                },
-                handlers_);
+            if (!ev) [[unlikely]] return;
+
+            std::apply([&](auto&... h) {
+                (inner_dispatch(h, ev) && ...);
+                }, handlers_);
         }
 
-        template <typename Event>
+        template<typename Event>
         void dispatch(event_ptr<Event>&& ev) {
-            dispatch(ev);
+            event_ptr<Event> local_ev = std::move(ev);
+            dispatch(local_ev);
         }
 
-       private:
-        template <typename Event, typename Handler>
-        __forceinline void execute_unified_dispatch(Handler& h, event_ptr<Event>& ev) {
-            if constexpr (HasConduitChain<Event>) {
-                dispatch_chain<Handler, Event>(h, ev, typename Event::conduit_chain{});
-            } else {
-                if constexpr (CanHandleExact<Handler, Event>) {
-                    h.on(ev);
-                }
+    private:
+        template<typename Handler, typename Event>
+        bool inner_dispatch(Handler& h, event_ptr<Event>& ev) {
+            return traverse_and_call<Handler, Event, Event>(h, ev);
+        }
+
+        template<typename Handler, typename Event, typename CurrentType>
+        bool traverse_and_call(Handler& h, event_ptr<Event>& ev) {
+            bool proceed = true;
+
+            if constexpr (requires { typename CurrentType::base_types; }) {
+                proceed = std::apply([&](auto*... dummy) {
+                    return ((traverse_and_call<Handler, Event, std::remove_pointer_t<decltype(dummy)>>(h, ev) && ev) && ...);
+                    }, typename CurrentType::base_types{});
             }
-        }
 
-        template <typename Handler, typename SourceEvent, typename... ChainTypes>
-        __forceinline void dispatch_chain(Handler& h, event_ptr<SourceEvent>& ev,
-                                          std::tuple<ChainTypes...>) {
-            (..., [&]() {
-                using TargetEvent = ChainTypes;
+            if (proceed && ev) {
+                if constexpr (std::is_same_v<Event, CurrentType>) {
+                    proceed = call_on_if_exists(h, ev);
+                }
+                else {
+                    event_ptr<CurrentType> base_view(ev, non_owning_tag{});
+                    proceed = call_on_if_exists(h, base_view);
 
-                if constexpr (CanHandleExact<Handler, TargetEvent>) {
-                    if constexpr (std::is_same_v<SourceEvent, TargetEvent>) {
-                        h.on(ev);
-                    } else {
-                        auto alias = make_alias_ptr<TargetEvent>(ev);
-                        h.on(alias);
+                    if (!base_view) {
+                        ev.release();
+                        proceed = false;
                     }
                 }
-            }());
+            }
+
+            return proceed && ev;
+        }
+
+        template<typename Handler, typename E>
+        bool call_on_if_exists(Handler& h, event_ptr<E>& ev) {
+            if constexpr (requires { h.on(ev); }) {
+                using Ret = decltype(h.on(ev));
+                if constexpr (std::is_same_v<Ret, bool>) {
+                    return h.on(ev);
+                }
+                else {
+                    h.on(ev);
+                    return true;
+                }
+            }
+            return true;
         }
     };
 
-    // ============================================================
+    // ===========================================================;
     // LAYER 7-8: BOUNDARIES & NETWORK
-    // ============================================================
+    // ===========================================================;
 
     template<typename Pipeline, typename Event>
     class bound_sink {
         Pipeline& pipe_;
-
-       public:
+    public:
         explicit bound_sink(Pipeline& p) : pipe_(p) {}
         void handle(event_ptr<Event> ev) { if (ev) pipe_.dispatch(ev); }
     };
 
     template<typename Event>
     struct trivial_serializer {
-        static_assert(std::is_trivially_copyable_v<Event>, "Event must be POD for network");
+        static_assert(std::is_trivially_copyable_v<Event>, "Event must be POD");
         static std::pair<const uint8_t*, std::size_t> encode(const Event* ev) {
-            return {reinterpret_cast<const uint8_t*>(ev), sizeof(Event)};
+            return { reinterpret_cast<const uint8_t*>(ev), sizeof(Event) };
         }
         static void decode(const uint8_t* data, Event* out) { std::memcpy(out, data, sizeof(Event)); }
     };
 
-    // ============================================================
-    // LAYER 9: RUNTIME DOMAIN
-    // ============================================================
+    // ===========================================================;
+    // LAYER 9: RUNTIME DOMAIN & ROUTING
+    // ===========================================================;
 
     template<typename... Events>
     class runtime_domain {
         std::tuple<pool<Events>...> pools_;
+    public:
+        explicit runtime_domain(std::size_t pool_size = 1024) : pools_(pool<Events>(pool_size)...) {}
 
-       public:
         template<typename Event, typename... Args>
         [[nodiscard]] event_ptr<Event> make(Args&&... args) {
             return std::get<pool<Event>>(pools_).make(std::forward<Args>(args)...);
         }
+
         template<typename Event>
         pool<Event>& get_pool() { return std::get<pool<Event>>(pools_); }
+    };
+
+    struct cluster {
+        template<typename E = void, typename... Args> void send(Args&&...) {}
+    };
+    struct router {};
+
+    template<typename E = void, typename... Args>
+    inline cluster bind_route(Args&&...) { return cluster{}; }
+
+    template<typename T, std::size_t NumOutputs, std::size_t ConduitSize>
+    class round_robin_switch : public handler_base<round_robin_switch<T, NumOutputs, ConduitSize>> {
+        std::array<conduit<T, ConduitSize>*, NumOutputs> outputs_{};
+        std::size_t next_{ 0 };
+
+    public:
+        void bind_track(std::size_t index, conduit<T, ConduitSize>& track) {
+            if (index < NumOutputs) {
+                outputs_[index] = &track;
+            }
+        }
+
+        void on(event_ptr<T>& ev) {
+            if (!ev) return;
+
+            for (std::size_t i = 0; i < NumOutputs; ++i) {
+                std::size_t idx = (next_ + i) % NumOutputs;
+
+                if (outputs_[idx]) {
+                    if (outputs_[idx]->push(ev.get())) {
+                        ev.release();
+                        next_ = (idx + 1) % NumOutputs;
+                        return;
+                    }
+                }
+            }
+        }
+    };
+
+    template<typename T, std::size_t NumInputs, std::size_t ConduitSize>
+    class round_robin_poller {
+        std::array<conduit<T, ConduitSize>*, NumInputs> inputs_{};
+        std::size_t next_{ 0 };
+
+    public:
+        void bind_track(std::size_t index, conduit<T, ConduitSize>& track) {
+            if (index < NumInputs) {
+                inputs_[index] = &track;
+            }
+        }
+
+        // Visszatettük a memóriapoolt paraméternek!
+        event_ptr<T> poll(pool<T>& p) {
+            for (std::size_t i = 0; i < NumInputs; ++i) {
+                std::size_t idx = (next_ + i) % NumInputs;
+
+                if (inputs_[idx]) {
+                    // A te pop(p) függvényed már event_ptr-t ad vissza, így csak átvesszük!
+                    if (auto ev = inputs_[idx]->pop(p)) {
+                        next_ = (idx + 1) % NumInputs;
+                        return ev;
+                    }
+                }
+            }
+            return event_ptr<T>{nullptr};
+        }
     };
 
 } // namespace cre
