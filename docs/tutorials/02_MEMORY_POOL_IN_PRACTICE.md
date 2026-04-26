@@ -10,13 +10,14 @@ Events are wrapped in an `cre::event_ptr`. This acts similarly to `std::unique_p
 
 ~~~cpp
 // 1. Define the domain and its capacity
-cre::runtime_domain<trade_event> domain;
+// Capacity (e.g., 1024) is required for the O(1) slab allocation
+cre::runtime_domain<trade_event, 1024> domain;
 
 // 2. Allocate an event
 auto ev = domain.make<trade_event>(150.50);
 
 if (ev) {
-&#x20;   // ev is valid and uniquely owned by this scope
+   // ev is valid and uniquely owned by this scope
 }
 
 // 3. ev goes out of scope -> instantly returns to the free-list

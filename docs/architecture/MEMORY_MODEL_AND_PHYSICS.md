@@ -5,7 +5,7 @@
 CONDUIT uses Acquire-Release semantics to minimize CPU pipeline stalls.
 
 - **Allocation:** `compare_exchange_weak` with `memory_order_release` on success and `memory_order_acquire` on failure.
-- **Deallocation:** Writes to `next\_index` occur before the atomic store to ensure global visibility.
+- **Deallocation:** Writes to `next_index` occur before the atomic store to ensure global visibility.
 
 ## ABA Protection
 

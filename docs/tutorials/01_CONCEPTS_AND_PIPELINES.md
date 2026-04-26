@@ -10,8 +10,8 @@ Instead of inheriting from a virtual interface, handlers inherit from themselves
 #include <conduit/core.hpp>
 
 struct logger_stage : cre::handler_base<logger_stage> {
-		// Overload resolution happens at compile time
-		void on(cre::event_ptr<my_event>& ev) {
+	// Overload resolution happens at compile time
+	void on(cre::event_ptr<my_event>& ev) {
 		// Implementation
 	}
 };
