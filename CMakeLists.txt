@@ -42,13 +42,15 @@ endif()
 # MSVC Native CPU Optimization
 # -------------------------------------------------------------
 if (MSVC)
-    add_compile_options(
-        /O2         # Full optimization
-        /GL         # Whole Program Optimization (LTO)
-        /arch:AVX2  # Modern SIMD
-        /fp:fast    # Fast floating point
-    )
-    add_link_options(/LTCG)  # Link-time code generation
+    if (CMAKE_BUILD_TYPE STREQUAL "Release")
+        add_compile_options(
+            /O2         # Full optimization
+            /GL         # Whole Program Optimization (LTO)
+            /arch:AVX2  # Modern SIMD
+            /fp:fast    # Fast floating point
+        )
+        add_link_options(/LTCG)  # Link-time code generation
+    endif()
 endif()
 
 # -------------------------------------------------------------
