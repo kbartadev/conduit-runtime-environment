@@ -121,6 +121,8 @@ These citations clarify the boundary between **existing scientific knowledge (pr
 - R. Cox — *Parsing JSON at Gigabytes per Second*, 2017.
 - A. Bebenita et al. — *Fast Parsing with Finite Automata*, 2015.
 
+The CRE HTTP parser is a hand‑written deterministic finite automaton (DFA) inspired by Ragel-style state machines and modern zero‑copy parsing research.
+
 ---
 
 # 10. Distributed Systems, Ordering & Determinism

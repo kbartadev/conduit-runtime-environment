@@ -1,8 +1,9 @@
 # Conduit Runtime Environment (CRE) ⚡
 
 [![Standard](https://img.shields.io/badge/Standard-C++20-blue.svg)](https://en.cppreference.com/w/cpp/20)
-[![Push Latency](https://img.shields.io/badge/Push-1.73_ns-success.svg)](#)
-[![Full Flux](https://img.shields.io/badge/Full_Flux-12.3_ns-success.svg)](#)
+[![Push Latency](https://img.shields.io/badge/Push-1.70_ns-success.svg)](#)
+[![Full Flux](https://img.shields.io/badge/Full_Flux-11.4_ns-success.svg)](#)
+[![Pipeline](https://img.shields.io/badge/Pipeline-8.80_ns-success.svg)](#)
 
 The **Conduit Runtime Environment (CRE)** is a low-latency, lock-free event processing framework written in C++20. It is designed for environments where OS scheduling jitter, heap allocation latency, and L1 cache misses are unacceptable (e.g., High-Frequency Trading, deterministic routing).
 
@@ -21,13 +22,20 @@ CPU Caches:
   L1 Instruction 32 KiB (x6)
   L2 Unified 1024 KiB (x6)
   L3 Unified 32768 KiB (x1)
---------------------------------------------
-Benchmark                     Time             CPU   Iterations
---------------------------------------------
-BM_Conduit_Push/1024       1.90 ns         1.88 ns    373333333
-BM_Conduit_Push/4096       1.76 ns         1.73 ns    407272727
-BM_Conduit_Push/8192       1.73 ns         1.73 ns    407272727
-BM_Conduit_FullFlux        12.3 ns         12.3 ns     56000000
+| Benchmark                | Time (ns) | CPU (ns) | Iterations | Notes               |
+|--------------------------|-----------|----------|------------|---------------------|
+| Conduit Push / 1024      | 1.84      | 1.84     | 407M       | SPSC write          |
+| Conduit Push / 4096      | 1.74      | 1.72     | 373M       | —                   |
+| Conduit Push / 8192      | 1.70      | 1.69     | 407M       | —                   |
+| FullFlux (push+pop)      | 11.4      | 11.5     | 64M        | end‑to‑end          |
+| Pipeline Dispatch        | 8.80      | 8.79     | 74M        | router              |
+| SPSC Throughput          | —         | 2.03 ms  | 100        | 4.92M msg/s         |
+| Wrap‑Around Test         | 10.66 ms  | 10.42 ms | 90         | 1.06M msg/s         |
+| False‑Sharing Test       | 19.53 ms  | 31.25 µs | 1000       | isolation           |
+| HTTP Parser              | 92.4      | 92.1     | 7.46M      | 10.86M parsed req/s |
+
+*All performance values are indicative measurements and may vary across hardware, compilers, and workloads.*
+
 Compiled with MSVC v143 (Release). Tested on Windows 11 Pro, AMD Ryzen 5 9600X.
 ```
 

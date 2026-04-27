@@ -39,6 +39,19 @@ if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
 endif()
 
 # -------------------------------------------------------------
+# MSVC Native CPU Optimization
+# -------------------------------------------------------------
+if (MSVC)
+    add_compile_options(
+        /O2         # Full optimization
+        /GL         # Whole Program Optimization (LTO)
+        /arch:AVX2  # Modern SIMD
+        /fp:fast    # Fast floating point
+    )
+    add_link_options(/LTCG)  # Link-time code generation
+endif()
+
+# -------------------------------------------------------------
 # Benchmarks
 # -------------------------------------------------------------
 if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/CMakeLists.txt")
