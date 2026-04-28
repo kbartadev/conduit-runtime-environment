@@ -8,16 +8,16 @@ DUAL-LICENSING NOTICE AND IP PROTECTION
 ============================================================================
 
 1. OPEN SOURCE (GNU AGPLv3)
-This software is provided under the GNU Affero General Public License v3 (AGPLv3).
-This is a strict copyleft license. ANY use of this software, including dynamic 
-linking, static linking, or integration into a network-accessible service 
-(e.g., a backend trading engine, matching engine, or data router), obligates 
-you to release the ENTIRE source code of your integrated application under 
-the AGPLv3 license. 
-
-Pursuant to Section 13 of the AGPLv3, if you modify the Program, your modified 
-version must prominently offer all users interacting with it remotely through 
-a computer network an opportunity to receive the Corresponding Source.
+This software is provided under the GNU Affero General Public License v3
+(AGPLv3). This is a strict copyleft license. ANY use of this software,
+including but not limited to source code inclusion (#include), macro 
+expansion, template instantiation, dynamic linking, static linking, or 
+integration into a network-accessible service obligates you to release the 
+ENTIRE source code of your integrated application under the AGPLv3 license. 
+Pursuant to Section 13 of the AGPLv3, if you modify the Program, your 
+modified version must prominently offer all users interacting with it 
+remotely through a computer network an opportunity to receive the 
+Corresponding Source.
 
 THERE ARE NO EXCEPTIONS OR "LINKING EXCEPTIONS" PROVIDED BY DEFAULT.
 
